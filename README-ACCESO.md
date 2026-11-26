@@ -39,9 +39,19 @@ La tienda y el panel de administración están publicados en AWS Amplify y consu
 
 ## Kinesis: operación, validación y limpieza
 
-Los streams de la aplicación son `skates-orders-events`, `skates-inventory-events` y `skates-dead-letter-stream`, en `us-east-1`. El panel administrativo muestra el estado, los shards y los leases; no muestra cada registro individual. Para comprobar publicación, revisar en los logs de `skates-backend` `Evento Kinesis publicado`. Para comprobar consumo, buscar `Evento Kinesis procesado` en los logs del proceso KCL.
+Los streams de la aplicación son `skates-orders-events`, `skates-inventory-events` y `skates-dead-letter-stream`, en `us-east-1`. La pantalla **Streaming (Kinesis)** permite publicar eventos de prueba de orden e inventario, muestra eventos persistidos por los consumidores KCL y presenta las leases como información de asignación (no como prueba de procesamiento). Los eventos de prueba son sintéticos y no modifican pedidos ni productos. Los eventos reales se publican desde los flujos de pago y cambios del catálogo. La lista de procesamiento se lee de `processed_messages`; los logs siguen disponibles en `journalctl`.
 
-`skates-worker` consume SNS/SQS; no es el consumidor Kinesis. KCL se ejecuta aparte con el perfil `stream-consumer`. La configuración KCL actual consume `skates-orders-events`; aunque se publican eventos de inventario, no hay un consumidor KCL configurado para `skates-inventory-events`. La última prueba procesó `PAYMENT_COMPLETED` con las aplicaciones analytics y notifications. El consumidor de prueba se dejó detenido; no hay procesamiento KCL continuo hasta configurar e iniciar un servicio dedicado.
+`skates-worker` consume SNS/SQS; no es el consumidor Kinesis. KCL corre como servicio dedicado `skates-kinesis-consumer` con el perfil `stream-consumer`; `KINESIS_CONSUMER_APP=all` mantiene consumidores de analítica y notificaciones sobre órdenes, y analítica sobre inventario. Instala y habilita la unidad descrita en [README del backend](./Skates-backend-tienda_Sanchez_Cerda/README.md#kinesis-en-ejecución-continua-en-ec2). Verifica su ejecución con `systemctl status skates-kinesis-consumer` y los eventos procesados en la pantalla; las leases por sí solas no prueban actividad reciente.
+
+### Evidencia de Kinesis para la evaluación
+
+En el panel admin, abrir **Streaming Kinesis** y mostrar **Eventos procesados recientemente**:
+
+- Un `PAYMENT_COMPLETED` con el mismo `eventId` bajo `skates-analytics-app` y `skates-notifications-app` demuestra que ambos consumidores independientes procesaron el evento de órdenes.
+- Un `INVENTORY_UPDATED` bajo `skates-inventory-analytics-app` demuestra el procesamiento del evento de inventario.
+- Las leases y checkpoints muestran asignación y avance por shard, pero no sustituyen la evidencia por `eventId` de la lista de eventos procesados.
+
+Para una demostración en vivo, iniciar KCL antes de pulsar **Probar evento de orden** o **Probar evento de inventario**. Los eventos sintéticos no modifican pedidos ni productos. Esperar a que el mismo `eventId` aparezca en los consumidores correspondientes y usar la lista persistida en MySQL como evidencia. La métrica de retraso informa la antigüedad de lectura; si no está cerca de cero, no afirmar que el consumidor está al día.
 
 ### Conectarse a MySQL en RDS desde EC2
 
@@ -91,7 +101,7 @@ Para recrear los streams:
 - Si se eliminaron mediante un stack dedicado, volver a desplegar `infra/aws-skates-kinesis.yaml` en CloudFormation en `us-east-1`.
 - Si no se usa un stack dedicado, el backend ofrece `POST /api/admin/streams/bootstrap`, protegido para usuarios Cognito del grupo `ADMIN`. Requiere Kinesis habilitado y permisos AWS para crear/configurar los streams y la alarma.
 
-Esperar a que los streams estén `ACTIVE` antes de iniciar KCL. Las tablas de leases/checkpoints se vuelven a crear cuando arranca cada aplicación KCL. La posición inicial predeterminada es `LATEST`; para validar, iniciar el consumidor primero y generar después un evento nuevo. Eliminar solo el consumidor detiene sus lecturas, pero no elimina el costo de shards provisionados; eliminar los streams sí detiene ese costo, a cambio de perder los datos.
+Esperar a que los streams estén `ACTIVE` antes de iniciar KCL. Las tablas de leases/checkpoints se vuelven a crear cuando arranca cada aplicación KCL. La posición inicial predeterminada es `LATEST`; para validar, iniciar el consumidor primero y luego publicar un evento de prueba desde el panel. Eliminar solo el consumidor detiene sus lecturas, pero no elimina el costo de shards provisionados; eliminar los streams sí detiene ese costo, a cambio de perder los datos.
 
 ## Preparar la presentación y recuperación de emergencia
 
