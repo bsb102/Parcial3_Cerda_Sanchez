@@ -37,6 +37,40 @@ A continuación, abrir las URLs de la tabla. Vite usa un certificado HTTPS local
 
 La tienda y el panel de administración están publicados en AWS Amplify y consumen el backend a través de API Gateway. El backend Spring Boot corre en EC2 como servicio `systemd` (`skates-backend`), conectado a RDS MySQL. No requiere iniciar comandos desde VS Code ni mantener una sesión SSH abierta. No se debe abrir el puerto `8080` del backend a Internet.
 
+## Kinesis: operación, validación y limpieza
+
+Los streams de la aplicación son `skates-orders-events`, `skates-inventory-events` y `skates-dead-letter-stream`, en `us-east-1`. El panel administrativo muestra el estado, los shards y los leases; no muestra cada registro individual. Para comprobar publicación, revisar en los logs de `skates-backend` `Evento Kinesis publicado`. Para comprobar consumo, buscar `Evento Kinesis procesado` en los logs del proceso KCL.
+
+`skates-worker` consume SNS/SQS; no es el consumidor Kinesis. KCL se ejecuta aparte con el perfil `stream-consumer`. La configuración KCL actual consume `skates-orders-events`; aunque se publican eventos de inventario, no hay un consumidor KCL configurado para `skates-inventory-events`. La última prueba procesó `PAYMENT_COMPLETED` con las aplicaciones analytics y notifications. El consumidor de prueba se dejó detenido; no hay procesamiento KCL continuo hasta configurar e iniciar un servicio dedicado.
+
+### Esquema MySQL requerido por Kinesis
+
+La columna `processed_messages.event_payload` debe ser `LONGTEXT` para almacenar el JSON completo del evento. Si aparece como `TINYTEXT`, los consumidores fallan al procesar eventos y pueden enviarlos a la DLQ. Conectar a la base `skates` y verificar:
+
+```sql
+SHOW FULL COLUMNS FROM processed_messages LIKE 'event_payload';
+```
+
+Si no es `LONGTEXT`, detener los consumidores KCL y aplicar:
+
+```sql
+ALTER TABLE processed_messages
+MODIFY COLUMN event_payload LONGTEXT NOT NULL;
+```
+
+En `/etc/skates/backend.env`, mantener `JPA_DDL_AUTO=none` para evitar que Hibernate vuelva a reducir el tipo al arrancar. Verificar de nuevo la columna después de reiniciar los servicios. El archivo de entorno contiene secretos: no compartirlo ni subirlo al repositorio.
+
+### Eliminar y recrear los recursos Kinesis
+
+El script [cleanup-kinesis.ps1](./Skates-backend-tienda_Sanchez_Cerda/scripts/cleanup-kinesis.ps1) elimina los streams completos (incluidos todos sus shards y registros), la alarma de CloudWatch y las tablas DynamoDB de leases/checkpoints KCL. No elimina MySQL, SNS ni SQS. Si se indica `-CloudFormationStackName`, también elimina ese stack dedicado. Revisar siempre cuenta y región, ejecutar primero con `-WhatIf` y recordar que los registros/checkpoints eliminados no se recuperan.
+
+Para recrear los streams:
+
+- Si se eliminaron mediante un stack dedicado, volver a desplegar `infra/aws-skates-kinesis.yaml` en CloudFormation en `us-east-1`.
+- Si no se usa un stack dedicado, el backend ofrece `POST /api/admin/streams/bootstrap`, protegido para usuarios Cognito del grupo `ADMIN`. Requiere Kinesis habilitado y permisos AWS para crear/configurar los streams y la alarma.
+
+Esperar a que los streams estén `ACTIVE` antes de iniciar KCL. Las tablas de leases/checkpoints se vuelven a crear cuando arranca cada aplicación KCL. La posición inicial predeterminada es `LATEST`; para validar, iniciar el consumidor primero y generar después un evento nuevo. Eliminar solo el consumidor detiene sus lecturas, pero no elimina el costo de shards provisionados; eliminar los streams sí detiene ese costo, a cambio de perder los datos.
+
 ## Preparar la presentación y recuperación de emergencia
 
 Antes de presentar, comprobar en AWS:
