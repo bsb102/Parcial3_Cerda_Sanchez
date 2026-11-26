@@ -43,6 +43,28 @@ Los streams de la aplicación son `skates-orders-events`, `skates-inventory-even
 
 `skates-worker` consume SNS/SQS; no es el consumidor Kinesis. KCL se ejecuta aparte con el perfil `stream-consumer`. La configuración KCL actual consume `skates-orders-events`; aunque se publican eventos de inventario, no hay un consumidor KCL configurado para `skates-inventory-events`. La última prueba procesó `PAYMENT_COMPLETED` con las aplicaciones analytics y notifications. El consumidor de prueba se dejó detenido; no hay procesamiento KCL continuo hasta configurar e iniciar un servicio dedicado.
 
+### Conectarse a MySQL en RDS desde EC2
+
+Ejecutar estos comandos en la sesión SSH de EC2, no en PowerShell local. Comprobar primero que el cliente esté disponible:
+
+```bash
+mysql --version
+```
+
+En `/etc/skates/backend.env`, `DB_URL` contiene la dirección y el nombre de la base; `DB_USERNAME` contiene el usuario. Se pueden consultar sin mostrar la contraseña:
+
+```bash
+sudo grep -E '^(DB_URL|DB_USERNAME)=' /etc/skates/backend.env
+```
+
+La URL actual apunta a `skates` en RDS y usa el usuario `skates_app`. Conectar así; `-p` solicitará la contraseña de forma interactiva:
+
+```bash
+mysql -h skates-db.cq2uked3iq8l.us-east-1.rds.amazonaws.com -P 3306 -u skates_app -p skates
+```
+
+Cuando aparezca `Enter password:`, ingresar el valor de `DB_PASSWORD` de `/etc/skates/backend.env`. No poner la contraseña en el comando, no compartirla ni guardar una copia en Git. En el prompt `mysql>`, se pueden ejecutar consultas como `SELECT DATABASE();` y los comandos SQL de la siguiente sección. Salir con `exit;`. Si el cliente no está instalado, usar RDS Query Editor o instalar un cliente MySQL compatible.
+
 ### Esquema MySQL requerido por Kinesis
 
 La columna `processed_messages.event_payload` debe ser `LONGTEXT` para almacenar el JSON completo del evento. Si aparece como `TINYTEXT`, los consumidores fallan al procesar eventos y pueden enviarlos a la DLQ. Conectar a la base `skates` y verificar:
