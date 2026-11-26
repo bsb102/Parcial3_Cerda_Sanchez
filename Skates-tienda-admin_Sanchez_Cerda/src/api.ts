@@ -52,6 +52,22 @@ export interface KinesisConsumerLease {
   checkpoint: string;
 }
 
+export interface KinesisProcessedEvent {
+  consumerName: string;
+  eventId: string;
+  eventType: string;
+  processedAt: string;
+}
+
+export type KinesisTestEventType = "ORDER" | "INVENTORY";
+
+export interface KinesisPublishedEvent {
+  eventId: string;
+  eventType: string;
+  streamName: string;
+  publishedAt: string;
+}
+
 export interface KinesisIteratorAge {
   streamName: string;
   iteratorAgeMilliseconds: number;
@@ -100,6 +116,23 @@ export async function obtenerStreamsKinesis(): Promise<KinesisStreamStatus[]> {
 export async function obtenerLeasesKinesis(): Promise<KinesisConsumerLease[]> {
   const res = await apiFetch("/api/admin/streams/consumers");
   if (!res.ok) throw new Error(`El backend respondió ${res.status} al consultar consumidores Kinesis`);
+  return res.json();
+}
+
+export async function obtenerEventosKinesisProcesados(): Promise<KinesisProcessedEvent[]> {
+  const res = await apiFetch("/api/admin/streams/processed");
+  if (!res.ok) throw new Error(`El backend respondió ${res.status} al consultar eventos procesados de Kinesis`);
+  return res.json();
+}
+
+export async function publicarEventoPruebaKinesis(
+  eventType: KinesisTestEventType,
+): Promise<KinesisPublishedEvent> {
+  const res = await apiFetch("/api/admin/streams/test-events", {
+    method: "POST",
+    body: JSON.stringify({ eventType }),
+  });
+  if (!res.ok) throw new Error(`El backend respondió ${res.status} al publicar el evento de prueba`);
   return res.json();
 }
 

@@ -1,17 +1,25 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   obtenerLeasesKinesis,
+  obtenerEventosKinesisProcesados,
+  publicarEventoPruebaKinesis,
   obtenerRetrasoKinesis,
   obtenerStreamsKinesis,
   type KinesisConsumerLease,
   type KinesisIteratorAge,
+  type KinesisProcessedEvent,
+  type KinesisPublishedEvent,
+  type KinesisTestEventType,
   type KinesisStreamStatus,
 } from "./api";
 
 export default function StreamingPanel() {
   const [streams, setStreams] = useState<KinesisStreamStatus[]>([]);
   const [leases, setLeases] = useState<KinesisConsumerLease[]>([]);
+  const [processedEvents, setProcessedEvents] = useState<KinesisProcessedEvent[]>([]);
   const [delays, setDelays] = useState<KinesisIteratorAge[]>([]);
+  const [lastPublished, setLastPublished] = useState<KinesisPublishedEvent | null>(null);
+  const [publishing, setPublishing] = useState<KinesisTestEventType | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -21,12 +29,14 @@ export default function StreamingPanel() {
         obtenerStreamsKinesis(),
         obtenerLeasesKinesis(),
       ]);
-      const nextDelays = await Promise.all(
-        nextStreams.map((stream) => obtenerRetrasoKinesis(stream.name)),
-      );
+      const [nextDelays, nextProcessedEvents] = await Promise.all([
+        Promise.all(nextStreams.map((stream) => obtenerRetrasoKinesis(stream.name))),
+        obtenerEventosKinesisProcesados(),
+      ]);
       setStreams(nextStreams);
       setLeases(nextLeases);
       setDelays(nextDelays);
+      setProcessedEvents(nextProcessedEvents);
       setError(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "No se pudo consultar Kinesis.");
@@ -43,13 +53,15 @@ export default function StreamingPanel() {
           obtenerStreamsKinesis(),
           obtenerLeasesKinesis(),
         ]);
-        const nextDelays = await Promise.all(
-          nextStreams.map((stream) => obtenerRetrasoKinesis(stream.name)),
-        );
+        const [nextDelays, nextProcessedEvents] = await Promise.all([
+          Promise.all(nextStreams.map((stream) => obtenerRetrasoKinesis(stream.name))),
+          obtenerEventosKinesisProcesados(),
+        ]);
         if (active) {
           setStreams(nextStreams);
           setLeases(nextLeases);
           setDelays(nextDelays);
+          setProcessedEvents(nextProcessedEvents);
           setError(null);
         }
       } catch (cause) {
@@ -66,7 +78,26 @@ export default function StreamingPanel() {
     };
   }, []);
 
+  const publishTestEvent = async (eventType: KinesisTestEventType) => {
+    setPublishing(eventType);
+    setError(null);
+    try {
+      const publishedEvent = await publicarEventoPruebaKinesis(eventType);
+      setLastPublished(publishedEvent);
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "No se pudo publicar el evento de prueba.");
+    } finally {
+      setPublishing(null);
+    }
+  };
+
   if (loading) return <p className="messaging-message">Consultando estado de Kinesis...</p>;
+  const publishedEventConsumers = lastPublished
+    ? processedEvents
+        .filter((event) => event.eventId === lastPublished.eventId)
+        .map((event) => event.consumerName)
+    : [];
 
   return (
     <div className="messaging-panel">
@@ -80,6 +111,27 @@ export default function StreamingPanel() {
       {error && <p className="messaging-error" role="alert">{error}</p>}
       {!error && (
         <>
+          <section className="messaging-events">
+            <h3>Publicar evento de prueba</h3>
+            <p className="messaging-message">
+              Envía un evento sintético al mismo stream de órdenes o inventario; no modifica pedidos ni productos.
+            </p>
+            <div className="kinesis-test-actions">
+              <button type="button" disabled={publishing !== null} onClick={() => void publishTestEvent("ORDER")}>
+                {publishing === "ORDER" ? "Publicando..." : "Probar evento de orden"}
+              </button>
+              <button type="button" disabled={publishing !== null} onClick={() => void publishTestEvent("INVENTORY")}>
+                {publishing === "INVENTORY" ? "Publicando..." : "Probar evento de inventario"}
+              </button>
+            </div>
+            {lastPublished && (
+              <p className="messaging-note" role="status">
+                {publishedEventConsumers.length > 0
+                  ? `Evento ${lastPublished.eventId} procesado por: ${publishedEventConsumers.join(", ")}.`
+                  : `Evento ${lastPublished.eventId} publicado; aún no aparece como procesado.`}
+              </p>
+            )}
+          </section>
           <div className="messaging-queues">
             {streams.map((stream) => (
               <article className="messaging-queue-card" key={stream.name}>
@@ -99,7 +151,7 @@ export default function StreamingPanel() {
           <section className="messaging-events">
             <h3>Consumidores KCL</h3>
             {leases.length === 0 ? (
-              <p className="messaging-message">No hay leases activos. Las tablas aparecen cuando arranca cada aplicación KCL.</p>
+              <p className="messaging-message">No hay leases visibles para las aplicaciones KCL configuradas.</p>
             ) : (
               <div className="messaging-event-list">
                 {leases.map((lease) => (
@@ -112,8 +164,24 @@ export default function StreamingPanel() {
               </div>
             )}
           </section>
+          <section className="messaging-events">
+            <h3>Eventos procesados recientemente</h3>
+            {processedEvents.length === 0 ? (
+              <p className="messaging-message">No hay eventos KCL persistidos recientemente. Los leases no confirman procesamiento.</p>
+            ) : (
+              <div className="messaging-event-list">
+                {processedEvents.map((event) => (
+                  <article className="messaging-event" key={`${event.consumerName}:${event.eventId}`}>
+                    <div><strong>{event.eventType}</strong><span>Consumidor: {event.consumerName}</span></div>
+                    <code>{event.eventId}</code>
+                    <time dateTime={event.processedAt}>{new Date(event.processedAt).toLocaleString()}</time>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
           <p className="messaging-note">
-            Kinesis está deshabilitado en el backend hasta configurar KINESIS_ENABLED y los recursos AWS.
+            El historial confirma procesamiento persistido por KCL; las leases solo indican asignación de shards.
             La vista se actualiza cada 15 segundos.
           </p>
         </>
