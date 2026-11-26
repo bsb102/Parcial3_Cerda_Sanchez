@@ -1,0 +1,105 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Streams de eventos de órdenes e inventario Skates, sin políticas IAM.
+
+Parameters:
+  OrdersShardCount:
+    Type: Number
+    Default: 3
+    MinValue: 1
+    MaxValue: 10000
+    Description: Tres shards dan capacidad inicial paralela manteniendo el orden por orden con la clave de partición.
+  OrdersRetentionHours:
+    Type: Number
+    Default: 24
+    MinValue: 24
+    MaxValue: 8760
+    Description: Retención inicial de órdenes para reproceso operativo de un día.
+  InventoryShardCount:
+    Type: Number
+    Default: 3
+    MinValue: 1
+    MaxValue: 10000
+    Description: Shards de inventario se particionan por skateId para preservar orden por producto.
+  InventoryRetentionHours:
+    Type: Number
+    Default: 168
+    MinValue: 24
+    MaxValue: 8760
+    Description: Siete días permiten reprocesar cambios y reconstruir métricas de inventario.
+  DeadLetterShardCount:
+    Type: Number
+    Default: 1
+    MinValue: 1
+    MaxValue: 10000
+    Description: Un shard es suficiente para el flujo de errores de bajo volumen; puede escalarse.
+  DeadLetterRetentionHours:
+    Type: Number
+    Default: 168
+    MinValue: 24
+    MaxValue: 8760
+    Description: Siete días para investigar y recuperar mensajes defectuosos.
+  IteratorAgeThresholdMilliseconds:
+    Type: Number
+    Default: 60000
+    MinValue: 1
+  AlarmEvaluationPeriods:
+    Type: Number
+    Default: 2
+    MinValue: 1
+  AlarmPeriodSeconds:
+    Type: Number
+    Default: 60
+    MinValue: 60
+
+Resources:
+  OrdersEventsStream:
+    Type: AWS::Kinesis::Stream
+    Properties:
+      Name: skates-orders-events
+      StreamModeDetails:
+        StreamMode: PROVISIONED
+      ShardCount: !Ref OrdersShardCount
+      RetentionPeriodHours: !Ref OrdersRetentionHours
+
+  InventoryEventsStream:
+    Type: AWS::Kinesis::Stream
+    Properties:
+      Name: skates-inventory-events
+      StreamModeDetails:
+        StreamMode: PROVISIONED
+      ShardCount: !Ref InventoryShardCount
+      RetentionPeriodHours: !Ref InventoryRetentionHours
+
+  DeadLetterEventsStream:
+    Type: AWS::Kinesis::Stream
+    Properties:
+      Name: skates-dead-letter-stream
+      StreamModeDetails:
+        StreamMode: PROVISIONED
+      ShardCount: !Ref DeadLetterShardCount
+      RetentionPeriodHours: !Ref DeadLetterRetentionHours
+
+  OrdersIteratorAgeAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: skates-orders-events-iterator-age
+      AlarmDescription: Antigüedad de lectura elevada en el stream de órdenes.
+      Namespace: AWS/Kinesis
+      MetricName: GetRecords.IteratorAgeMilliseconds
+      Dimensions:
+        - Name: StreamName
+          Value: !Ref OrdersEventsStream
+      Statistic: Maximum
+      Period: !Ref AlarmPeriodSeconds
+      EvaluationPeriods: !Ref AlarmEvaluationPeriods
+      Threshold: !Ref IteratorAgeThresholdMilliseconds
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+Outputs:
+  OrdersStreamName:
+    Value: !Ref OrdersEventsStream
+  InventoryStreamName:
+    Value: !Ref InventoryEventsStream
+  DeadLetterStreamName:
+    Value: !Ref DeadLetterEventsStream
