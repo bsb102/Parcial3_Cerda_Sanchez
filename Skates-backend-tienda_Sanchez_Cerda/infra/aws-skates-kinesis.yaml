@@ -2,6 +2,24 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: Streams de eventos de órdenes e inventario Skates, sin políticas IAM.
 
 Parameters:
+  OrdersStreamName:
+    Type: String
+    Default: skates-orders-events
+    MinLength: 1
+    MaxLength: 128
+    AllowedPattern: "^[a-zA-Z0-9_.-]+$"
+  InventoryStreamName:
+    Type: String
+    Default: skates-inventory-events
+    MinLength: 1
+    MaxLength: 128
+    AllowedPattern: "^[a-zA-Z0-9_.-]+$"
+  DeadLetterStreamName:
+    Type: String
+    Default: skates-dead-letter-stream
+    MinLength: 1
+    MaxLength: 128
+    AllowedPattern: "^[a-zA-Z0-9_.-]+$"
   OrdersShardCount:
     Type: Number
     Default: 3
@@ -55,7 +73,7 @@ Resources:
   OrdersEventsStream:
     Type: AWS::Kinesis::Stream
     Properties:
-      Name: skates-orders-events
+      Name: !Ref OrdersStreamName
       StreamModeDetails:
         StreamMode: PROVISIONED
       ShardCount: !Ref OrdersShardCount
@@ -64,7 +82,7 @@ Resources:
   InventoryEventsStream:
     Type: AWS::Kinesis::Stream
     Properties:
-      Name: skates-inventory-events
+      Name: !Ref InventoryStreamName
       StreamModeDetails:
         StreamMode: PROVISIONED
       ShardCount: !Ref InventoryShardCount
@@ -73,7 +91,7 @@ Resources:
   DeadLetterEventsStream:
     Type: AWS::Kinesis::Stream
     Properties:
-      Name: skates-dead-letter-stream
+      Name: !Ref DeadLetterStreamName
       StreamModeDetails:
         StreamMode: PROVISIONED
       ShardCount: !Ref DeadLetterShardCount
@@ -82,7 +100,7 @@ Resources:
   OrdersIteratorAgeAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmName: skates-orders-events-iterator-age
+      AlarmName: !Sub "${OrdersStreamName}-iterator-age"
       AlarmDescription: Antigüedad de lectura elevada en el stream de órdenes.
       Namespace: AWS/Kinesis
       MetricName: GetRecords.IteratorAgeMilliseconds
@@ -98,8 +116,8 @@ Resources:
 
 Outputs:
   OrdersStreamName:
-    Value: !Ref OrdersEventsStream
+    Value: !Ref OrdersStreamName
   InventoryStreamName:
-    Value: !Ref InventoryEventsStream
+    Value: !Ref InventoryStreamName
   DeadLetterStreamName:
-    Value: !Ref DeadLetterEventsStream
+    Value: !Ref DeadLetterStreamName

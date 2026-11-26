@@ -7,13 +7,13 @@ Elimina solo los streams configurados, la alarma IteratorAge y las tablas Dynamo
 de leases KCL para analytics y notifications. No elimina SNS, SQS, MySQL ni otros
 recursos. Si los streams pertenecen a CloudFormation, se puede indicar el nombre
 del stack dedicado; se aborta si contiene tipos de recursos ajenos a Kinesis.
+Usa el mismo nombre de stack que setup-kinesis.ps1 cuando este lo creo.
+Si no se indica region o perfil, usa la configuracion existente de AWS CLI.
 
 Detén primero las instancias backend con KINESIS_ENABLED=true y los consumidores KCL.
 #>
-[CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = "High")]
+[CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = "Medium")]
 param(
-    [Parameter(Mandatory = $true)]
-    [ValidateNotNullOrEmpty()]
     [string]$Region,
 
     [string]$Profile,
@@ -42,6 +42,9 @@ if ([string]::IsNullOrWhiteSpace($AnalyticsApplicationName)) {
 if ([string]::IsNullOrWhiteSpace($NotificationsApplicationName)) {
     $NotificationsApplicationName = if ($env:KINESIS_NOTIFICATIONS_APP_NAME) { $env:KINESIS_NOTIFICATIONS_APP_NAME } else { "skates-notifications-app" }
 }
+if ([string]::IsNullOrWhiteSpace($CloudFormationStackName)) {
+    $CloudFormationStackName = $env:KINESIS_CLOUDFORMATION_STACK_NAME
+}
 
 $aws = Get-Command aws -ErrorAction SilentlyContinue
 if (-not $aws) {
@@ -56,7 +59,11 @@ function Invoke-AwsCli {
         [switch]$AllowMissing
     )
 
-    $allArguments = @($Arguments) + @("--region", $Region, "--output", "json")
+    $allArguments = @($Arguments)
+    if (-not [string]::IsNullOrWhiteSpace($Region)) {
+        $allArguments += @("--region", $Region)
+    }
+    $allArguments += @("--output", "json")
     if (-not [string]::IsNullOrWhiteSpace($Profile)) {
         $allArguments += @("--profile", $Profile)
     }
@@ -80,6 +87,34 @@ function Invoke-AwsCli {
     return $text
 }
 
+if ([string]::IsNullOrWhiteSpace($Region)) {
+    if (-not [string]::IsNullOrWhiteSpace($env:AWS_REGION)) {
+        $Region = $env:AWS_REGION
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace($env:AWS_DEFAULT_REGION)) {
+        $Region = $env:AWS_DEFAULT_REGION
+    }
+    else {
+        $regionArguments = @("configure", "get", "region")
+        $configuredProfile = if (-not [string]::IsNullOrWhiteSpace($Profile)) {
+            $Profile
+        } else {
+            $env:AWS_PROFILE
+        }
+        if (-not [string]::IsNullOrWhiteSpace($configuredProfile)) {
+            $regionArguments += @("--profile", $configuredProfile)
+        }
+        $regionOutput = & $aws.Source @regionArguments 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            throw "No se pudo leer la region configurada en AWS CLI: $(($regionOutput | Out-String).Trim())"
+        }
+        $Region = ($regionOutput | Out-String).Trim()
+    }
+    if ([string]::IsNullOrWhiteSpace($Region)) {
+        throw "No hay una region configurada en AWS CLI. Configurala con 'aws configure' o indica -Region."
+    }
+}
+
 $identityJson = Invoke-AwsCli -Arguments @("sts", "get-caller-identity")
 $identity = $identityJson | ConvertFrom-Json
 
@@ -98,8 +133,8 @@ if (-not [string]::IsNullOrWhiteSpace($CloudFormationStackName)) {
 Write-Host "No se eliminarán SNS, SQS, MySQL ni recursos de otros nombres."
 
 if (-not $WhatIfPreference) {
-    $confirmation = Read-Host 'Para continuar, escribe exactamente ELIMINAR KINESIS'
-    if ($confirmation -cne "ELIMINAR KINESIS") {
+    $confirmation = Read-Host 'Para continuar, escribe CONFIRMAR'
+    if ($confirmation -cne "CONFIRMAR") {
         throw "Confirmación incorrecta. No se eliminó ningún recurso."
     }
 }
